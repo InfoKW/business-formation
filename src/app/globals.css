@@ -1,0 +1,81 @@
+@import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Questrial&family=Marcellus&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    @apply font-primary bg-kw-cream text-kw-text-primary;
+  }
+}
+
+@layer components {
+  /* ── KW Button styles matching the marketing site ── */
+  .btn-gold {
+    @apply inline-flex items-center gap-2 text-[11px] font-bold tracking-[0.1em] uppercase
+           px-8 py-3.5 bg-kw-gold text-kw-forest border-2 border-kw-gold rounded-pill
+           no-underline transition-all duration-200 hover:bg-kw-gold-light hover:border-kw-gold-light
+           cursor-pointer;
+  }
+
+  .btn-forest {
+    @apply inline-flex items-center gap-2 text-[11px] font-bold tracking-[0.1em] uppercase
+           px-8 py-3.5 bg-transparent text-kw-forest border-2 border-kw-forest rounded-pill
+           no-underline transition-all duration-200 hover:bg-kw-forest hover:text-white
+           cursor-pointer;
+  }
+
+  .btn-outline-light {
+    @apply inline-flex items-center text-[11px] font-bold tracking-[0.12em] uppercase
+           px-10 py-3.5 bg-transparent text-white border border-white/55 rounded-pill
+           no-underline transition-all duration-200 hover:border-white hover:bg-white/10
+           cursor-pointer;
+  }
+
+  /* ── Form elements ── */
+  .form-label {
+    @apply block text-[13px] font-semibold text-kw-text-primary mb-1.5 tracking-[0.02em];
+  }
+
+  .form-input {
+    @apply w-full px-4 py-3 border border-kw-border-mid rounded-card bg-white
+           text-[15px] text-kw-text-primary font-primary
+           outline-none transition-colors duration-150
+           focus:border-kw-gold focus:ring-2 focus:ring-kw-gold/20
+           placeholder:text-kw-text-muted;
+  }
+
+  .form-input-error {
+    @apply border-red-400 focus:border-red-400 focus:ring-red-100;
+  }
+
+  .form-select {
+    @apply form-input appearance-none cursor-pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23767676' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 40px;
+  }
+
+  .form-textarea {
+    @apply form-input resize-none;
+  }
+
+  .form-error {
+    @apply mt-1 text-[12px] text-red-500;
+  }
+
+  .form-hint {
+    @apply mt-1 text-[12px] text-kw-text-muted;
+  }
+
+  /* ── Card ── */
+  .kw-card {
+    @apply bg-white border border-kw-border-light rounded-card shadow-hover p-6;
+  }
+}

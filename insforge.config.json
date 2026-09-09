@@ -1,0 +1,23 @@
+{
+  "name": "kelliworks-formation-portal",
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "installCommand": "npm install",
+  "envVars": [
+    "NEXT_PUBLIC_INSFORGE_URL",
+    "NEXT_PUBLIC_INSFORGE_ANON_KEY",
+    "INSFORGE_SERVICE_ROLE_KEY",
+    "STRIPE_SECRET_KEY",
+    "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "NWRA_API_KEY",
+    "RESEND_API_KEY",
+    "RESEND_FROM_EMAIL",
+    "ADMIN_ALERT_EMAIL",
+    "SLACK_WEBHOOK_URL",
+    "ADMIN_AUTH_SECRET",
+    "SSN_ENCRYPTION_KEY",
+    "NEXT_PUBLIC_APP_URL"
+  ]
+}

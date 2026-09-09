@@ -1,0 +1,58 @@
+/**
+ * POST /api/admin/orders/:id/retry-nwra
+ *
+ * Re-runs the NWRA submission for an order in nwra_error status.
+ * Auth-protected via middleware.
+ */
+import { NextRequest, NextResponse } from 'next/server'
+import { createServiceClient } from '@/lib/insforge/server'
+
+type RouteContext = { params: { id: string } }
+
+export async function POST(_req: NextRequest, { params }: RouteContext) {
+  try {
+    const insforge = createServiceClient()
+
+    const { data: order, error: fetchError } = await insforge.database
+      .from('formation.orders')
+      .select('id, status')
+      .eq('id', params.id)
+      .maybeSingle()
+
+    if (fetchError) throw fetchError
+    if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
+
+    if (order.status !== 'nwra_error') {
+      return NextResponse.json(
+        { error: `Cannot retry - order status is "${order.status}", must be "nwra_error"` },
+        { status: 409 },
+      )
+    }
+
+    // Reset to payment_confirmed so the submission job can run again
+    await insforge.database
+      .from('formation.orders')
+      .update({ status: 'payment_confirmed', nwra_error_message: null })
+      .eq('id', params.id)
+
+    await insforge.database.from('formation.order_events').insert({
+      order_id:   params.id,
+      event_type: 'status_change',
+      detail:     { from: 'nwra_error', to: 'payment_confirmed', triggered_by: 'admin_retry' },
+    })
+
+    setImmediate(async () => {
+      try {
+        const { processNwraSubmission } = await import('@/lib/nwra-submit')
+        await processNwraSubmission(params.id)
+      } catch (err) {
+        console.error('[admin/retry-nwra] background job failed:', err)
+      }
+    })
+
+    return NextResponse.json({ ok: true, message: 'NWRA submission queued' })
+  } catch (err) {
+    console.error('[POST /api/admin/orders/:id/retry-nwra]', err)
+    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+  }
+}
