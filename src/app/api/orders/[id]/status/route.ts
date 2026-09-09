@@ -9,9 +9,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/insforge/server'
 
-type RouteContext = { params: { id: string } }
-
-export async function GET(req: NextRequest, { params }: RouteContext) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const token = req.nextUrl.searchParams.get('token')
   if (!token) return NextResponse.json({ error: 'Missing token' }, { status: 400 })
 
@@ -20,7 +19,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     const { data, error } = await insforge.database
       .from('formation.orders')
       .select('status, business_name_choice_1')
-      .eq('id', params.id)
+      .eq('id', id)
       .eq('status_token', token)
       .maybeSingle()
 

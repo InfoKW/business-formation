@@ -25,9 +25,8 @@ const schema = z.object({
   owners: z.array(ownerSchema).min(1),
 })
 
-type RouteContext = { params: { id: string } }
-
-export async function POST(req: NextRequest, { params }: RouteContext) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   try {
     const body = await req.json()
     const parsed = schema.safeParse(body)
@@ -43,12 +42,12 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
     // ── Mock mode ────────────────────────────────────────────────────────────
     if (isMockMode()) {
-      const order = mockStore.getOrder(params.id)
+      const order = mockStore.getOrder(id)
       if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
 
       const mockOwners = owners.map((o) => ({
         id: randomUUID(),
-        order_id: params.id,
+        order_id: id,
         first_name: o.first_name,
         last_name: o.last_name,
         ownership_percentage: o.ownership_percentage,
@@ -56,7 +55,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         email: o.email,
         phone: o.phone,
       }))
-      mockStore.setOwners(params.id, mockOwners)
+      mockStore.setOwners(id, mockOwners)
       return NextResponse.json({ ok: true, count: mockOwners.length })
     }
 
@@ -68,7 +67,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     const { data: existing, error: fetchError } = await insforge.database
       .from('formation.orders')
       .select('id, status')
-      .eq('id', params.id)
+      .eq('id', id)
       .maybeSingle()
 
     if (fetchError) throw fetchError
@@ -81,13 +80,13 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     const { error: deleteError } = await insforge.database
       .from('formation.order_owners')
       .delete()
-      .eq('order_id', params.id)
+      .eq('order_id', id)
     if (deleteError) throw deleteError
 
     const ownerRows = owners.map((o) => {
       const rawDigits = o.ssn_full.replace(/\D/g, '')
       return {
-        order_id:             params.id,
+        order_id:             id,
         first_name:           o.first_name,
         middle_name:          o.middle_name ?? null,
         last_name:            o.last_name,

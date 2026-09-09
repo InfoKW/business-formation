@@ -28,11 +28,10 @@ const patchSchema = z.object({
   }).optional(),
 })
 
-type RouteContext = { params: { id: string } }
-
-export async function GET(_req: NextRequest, { params }: RouteContext) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   if (isMockMode()) {
-    const order = mockStore.getOrder(params.id)
+    const order = mockStore.getOrder(id)
     if (!order) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     return NextResponse.json(order)
   }
@@ -44,7 +43,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     const { data, error } = await insforge.database
       .from('formation.orders')
       .select('*')
-      .eq('id', params.id)
+      .eq('id', id)
       .maybeSingle()
 
     if (error) throw error
@@ -56,7 +55,8 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: RouteContext) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   try {
     const body = await req.json()
     const parsed = patchSchema.safeParse(body)
@@ -68,11 +68,11 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
 
     // ── Mock mode ────────────────────────────────────────────────────────────
     if (isMockMode()) {
-      const order = mockStore.getOrder(params.id)
+      const order = mockStore.getOrder(id)
       if (!order) return NextResponse.json({ error: 'Not found' }, { status: 404 })
       const updates: Record<string, unknown> = { ...d }
       if (d.addons) updates.addons = { ...(order.addons ?? {}), ...d.addons }
-      mockStore.updateOrder(params.id, updates)
+      mockStore.updateOrder(id, updates)
       return NextResponse.json({ ok: true })
     }
 
@@ -83,7 +83,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     const { data: existing, error: fetchError } = await insforge.database
       .from('formation.orders')
       .select('status, addons')
-      .eq('id', params.id)
+      .eq('id', id)
       .maybeSingle()
 
     if (fetchError) throw fetchError
@@ -116,7 +116,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       const { error: updateError } = await insforge.database
         .from('formation.orders')
         .update(updates)
-        .eq('id', params.id)
+        .eq('id', id)
       if (updateError) throw updateError
     }
 

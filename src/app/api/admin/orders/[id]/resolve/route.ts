@@ -10,16 +10,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/insforge/server'
 import { sendFiledWithNwraEmail } from '@/lib/email'
 
-type RouteContext = { params: { id: string } }
-
-export async function POST(_req: NextRequest, { params }: RouteContext) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   try {
     const insforge = createServiceClient()
 
     const { data: order, error: fetchError } = await insforge.database
       .from('formation.orders')
       .select('*')
-      .eq('id', params.id)
+      .eq('id', id)
       .maybeSingle()
 
     if (fetchError) throw fetchError
@@ -35,10 +34,10 @@ export async function POST(_req: NextRequest, { params }: RouteContext) {
     await insforge.database
       .from('formation.orders')
       .update({ status: 'filed_with_nwra', nwra_error_message: null })
-      .eq('id', params.id)
+      .eq('id', id)
 
     await insforge.database.from('formation.order_events').insert({
-      order_id:   params.id,
+      order_id:   id,
       event_type: 'status_change',
       detail:     { from: 'nwra_error', to: 'filed_with_nwra', triggered_by: 'admin_manual_resolve' },
     })

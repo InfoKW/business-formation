@@ -8,13 +8,12 @@ import { isMockMode, mockStore } from '@/lib/mock-store'
 import { computePrice } from '@/lib/pricing'
 import type { EntityType, OrderAddons } from '@/types'
 
-type RouteContext = { params: { id: string } }
-
-export async function POST(_req: NextRequest, { params }: RouteContext) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   try {
     // ── Mock mode ────────────────────────────────────────────────────────────
     if (isMockMode()) {
-      const order = mockStore.getOrder(params.id)
+      const order = mockStore.getOrder(id)
       if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
 
       const breakdown = computePrice(
@@ -22,13 +21,13 @@ export async function POST(_req: NextRequest, { params }: RouteContext) {
         order.formation_state ?? 'NJ',
         (order.addons ?? {}) as Partial<OrderAddons>,
       )
-      mockStore.updateOrder(params.id, {
+      mockStore.updateOrder(id, {
         status: 'pending_payment',
         price_cents: breakdown.total_cents,
-        stripe_payment_intent_id: 'mock_pi_' + params.id,
+        stripe_payment_intent_id: 'mock_pi_' + id,
       })
       return NextResponse.json({
-        clientSecret: 'mock_secret_' + params.id + '_secret',
+        clientSecret: 'mock_secret_' + id + '_secret',
         breakdown,
         mock: true,
       })
@@ -42,7 +41,7 @@ export async function POST(_req: NextRequest, { params }: RouteContext) {
     const { data: order, error: fetchError } = await insforge.database
       .from('formation.orders')
       .select('*')
-      .eq('id', params.id)
+      .eq('id', id)
       .maybeSingle()
 
     if (fetchError) throw fetchError
@@ -78,7 +77,7 @@ export async function POST(_req: NextRequest, { params }: RouteContext) {
         await insforge.database
           .from('formation.orders')
           .update({ stripe_payment_intent_id: pi.id })
-          .eq('id', params.id)
+          .eq('id', id)
       }
     } else {
       const pi = await stripe.paymentIntents.create({
@@ -96,7 +95,7 @@ export async function POST(_req: NextRequest, { params }: RouteContext) {
           price_cents:              breakdown.total_cents,
           status:                   'pending_payment',
         })
-        .eq('id', params.id)
+        .eq('id', id)
     }
 
     return NextResponse.json({ clientSecret, breakdown })

@@ -7,16 +7,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/insforge/server'
 
-type RouteContext = { params: { id: string } }
-
-export async function POST(_req: NextRequest, { params }: RouteContext) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   try {
     const insforge = createServiceClient()
 
     const { data: order, error: fetchError } = await insforge.database
       .from('formation.orders')
       .select('id, status')
-      .eq('id', params.id)
+      .eq('id', id)
       .maybeSingle()
 
     if (fetchError) throw fetchError
@@ -33,10 +32,10 @@ export async function POST(_req: NextRequest, { params }: RouteContext) {
     await insforge.database
       .from('formation.orders')
       .update({ status: 'payment_confirmed', nwra_error_message: null })
-      .eq('id', params.id)
+      .eq('id', id)
 
     await insforge.database.from('formation.order_events').insert({
-      order_id:   params.id,
+      order_id:   id,
       event_type: 'status_change',
       detail:     { from: 'nwra_error', to: 'payment_confirmed', triggered_by: 'admin_retry' },
     })
@@ -44,7 +43,7 @@ export async function POST(_req: NextRequest, { params }: RouteContext) {
     setImmediate(async () => {
       try {
         const { processNwraSubmission } = await import('@/lib/nwra-submit')
-        await processNwraSubmission(params.id)
+        await processNwraSubmission(id)
       } catch (err) {
         console.error('[admin/retry-nwra] background job failed:', err)
       }
