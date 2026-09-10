@@ -73,7 +73,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ id: order.id, status_token: order.status_token }, { status: 201 })
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
     console.error('[POST /api/orders]', err)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    return NextResponse.json({
+      error: 'Server error',
+      debug_mock: process.env.MOCK_DB,
+      debug_detail: msg,
+    }, { status: 500 })
   }
 }
