@@ -1,112 +1,101 @@
 /**
  * Northwest Registered Agent / Corporate Tools API integration.
  *
- * ── OPEN ITEMS - do not build this section until confirmed ──────────────────
+ * Authentication: JWT with HS256
+ *   Header:  { alg: 'HS256', access_key: NWRA_ACCESS_KEY }
+ *   Payload: { path: '/companies', content: sha256(queryString + requestBody) }
+ *   Signed with: NWRA_SECRET_KEY
  *
- *  1. JWT signing spec: algorithm (RS256? HS256?), required claims, token
- *     expiry/refresh behavior. Check the Corporate Tools portal under
- *     Account Settings → API Management and the official examples at:
- *     github.com/corptools-api/CorpTools-API-Examples
+ * Company creation: POST /companies
+ *   entity_type must be the full NWRA constant string (e.g. "Limited Liability Company")
+ *   home_state must be the full state name (e.g. "New Jersey")
  *
- *  2. Exact endpoint(s) for creating a company record and placing a formation
- *     order, and how add-ons (EIN, S-Corp election, expedited, BOI report)
- *     attach to that order.
- *
- *  3. Status sync mechanism: do they push webhooks, or must we poll a GET
- *     endpoint? NWRA's wholesale-partner page hints at real-time updates -
- *     confirm which mechanism.
- *
- *  4. Sandbox / test environment availability - confirm before pointing at
- *     production.
- *
- * ── What this integration does (per PRD §9 / §11) ──────────────────────────
- *
- *  Calling this API places the formation *order* into NWRA's fulfillment queue.
- *  It does NOT instantly file with any Secretary of State. NWRA's own operations
- *  team handles the actual state filing. The client-facing message must reflect
- *  this: "submitted for processing", not "your business is formed".
+ * ── OPEN ITEMS ───────────────────────────────────────────────────────────────
+ *  1. Formation order placement — POST /companies creates the company record.
+ *     Confirm whether a separate call (Order Items / Shopping Cart / Filing Products)
+ *     is needed to actually place the formation filing order, or if company creation
+ *     is sufficient for wholesale partners.
+ *  2. Add-on attachment (EIN, S-Corp election, expedited, BOI report) — confirm
+ *     which endpoint accepts these after company creation.
+ *  3. NWRA status sync — confirm webhook (Callbacks) vs polling mechanism.
+ *  4. Test in NWRA sandbox before pointing at production.
  *
  * ── SSN handling ────────────────────────────────────────────────────────────
- *
- *  Full SSNs are decrypted from the DB here, passed to the NWRA API in memory,
- *  and are NOT logged, not written to order_events, not cached anywhere.
+ *  Full SSNs are decrypted in nwra-submit.ts, passed here in memory, and are
+ *  NOT logged, not written to order_events, not cached anywhere.
  *  On successful NWRA submission the ssn_encrypted column is deleted.
  */
 
 import { SignJWT } from 'jose'
+import { createHash } from 'crypto'
 import type { Order, OrderOwner } from '@/types'
 
 const NWRA_BASE_URL = 'https://api.corporatetools.com'
 
+// ── Lookup tables ─────────────────────────────────────────────────────────────
+
+/** Map KelliWorks entity type codes → NWRA full entity type strings */
+const ENTITY_TYPE_MAP: Record<string, string> = {
+  LLC:                  'Limited Liability Company',
+  Corporation:          'Corporation',
+  'S-Corp':             'Corporation', // S-Corp election is a separate add-on
+  'Sole Proprietorship':'Sole Proprietorship',
+  'Nonprofit':          'Nonprofit Corporation',
+}
+
+/** Map two-letter state abbreviations → full state names for NWRA */
+const STATE_NAME_MAP: Record<string, string> = {
+  AL: 'Alabama',        AK: 'Alaska',          AZ: 'Arizona',
+  AR: 'Arkansas',       CA: 'California',       CO: 'Colorado',
+  CT: 'Connecticut',    DE: 'Delaware',          FL: 'Florida',
+  GA: 'Georgia',        HI: 'Hawaii',            ID: 'Idaho',
+  IL: 'Illinois',       IN: 'Indiana',           IA: 'Iowa',
+  KS: 'Kansas',         KY: 'Kentucky',          LA: 'Louisiana',
+  ME: 'Maine',          MD: 'Maryland',          MA: 'Massachusetts',
+  MI: 'Michigan',       MN: 'Minnesota',         MS: 'Mississippi',
+  MO: 'Missouri',       MT: 'Montana',           NE: 'Nebraska',
+  NV: 'Nevada',         NH: 'New Hampshire',      NJ: 'New Jersey',
+  NM: 'New Mexico',     NY: 'New York',           NC: 'North Carolina',
+  ND: 'North Dakota',   OH: 'Ohio',              OK: 'Oklahoma',
+  OR: 'Oregon',         PA: 'Pennsylvania',       RI: 'Rhode Island',
+  SC: 'South Carolina', SD: 'South Dakota',       TN: 'Tennessee',
+  TX: 'Texas',          UT: 'Utah',              VT: 'Vermont',
+  VA: 'Virginia',       WA: 'Washington',         WV: 'West Virginia',
+  WI: 'Wisconsin',      WY: 'Wyoming',            DC: 'District of Columbia',
+}
+
 // ── JWT auth ─────────────────────────────────────────────────────────────────
 
-async function buildAuthToken(): Promise<string> {
-  const apiKey = process.env.NWRA_API_KEY
-  if (!apiKey) throw new Error('NWRA_API_KEY is not set')
-
-  // TODO: Fill in the correct JWT signing spec once confirmed from the Corporate
-  // Tools portal. The algorithm, claims, and signing key format below are
-  // PLACEHOLDERS based on the public docs ("a JWT library for signing
-  // authorization tokens") - replace before going live.
-  //
-  // Example for HS256 with a shared secret key:
-  const key = new TextEncoder().encode(apiKey)
-  const token = await new SignJWT({ iss: 'kelliworks' })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime('5m')
-    .sign(key)
-
-  return token
-}
-
-// ── Payload mapping ──────────────────────────────────────────────────────────
-
 /**
- * Map a KelliWorks order + owners into the Corporate Tools API payload shape.
+ * Build a per-request JWT for the Corporate Tools API.
  *
- * TODO: Replace the property names and nesting with the actual payload schema
- * from the Corporate Tools docs / C# examples once confirmed.
+ * Header:  { alg: 'HS256', access_key: <access key> }
+ * Payload: { path: <endpoint path>, content: sha256(queryString + requestBody) }
+ * Signed with secret_key (HS256).
  *
- * @param decryptedSsns - Map of owner_id → full SSN string (decrypted in the
- *   calling function, passed in here for NWRA submission, never logged)
+ * @param path - The API path for this request, e.g. '/companies'
+ * @param body - The raw JSON request body string ('' for GET requests)
+ * @param queryString - The query string without '?' ('' for most requests)
  */
-function buildNwraPayload(
-  order: Order,
-  owners: (OrderOwner & { ssn_full?: string })[],
-): Record<string, unknown> {
-  // TODO: Replace with confirmed Corporate Tools payload shape.
-  return {
-    companyName: order.business_name_choice_1,
-    alternateCompanyName: order.business_name_choice_2 ?? undefined,
-    entityType: order.entity_type,
-    formationState: order.formation_state,
-    businessAddress: order.business_address,
-    description: order.business_description,
-    anticipatedStartDate: order.anticipated_start_date,
-    addons: {
-      ein: order.addons?.ein ?? false,
-      sCorpElection: order.addons?.s_corp_election ?? false,
-      expedited: order.addons?.expedited ?? false,
-      boiReport: order.addons?.boi_report ?? false,
-    },
-    members: owners.map((o) => ({
-      firstName: o.first_name,
-      middleName: o.middle_name ?? undefined,
-      lastName: o.last_name,
-      dateOfBirth: o.date_of_birth,
-      ownershipPercentage: o.ownership_percentage,
-      ssn: o.ssn_full,   // full SSN - passed in memory, never stored here
-      citizenshipStatus: o.citizenship_status,
-      mailingAddress: o.mailing_address,
-      personalAddress: o.personal_address ?? undefined,
-      phone: o.phone,
-      email: o.email,
-    })),
-  }
+async function buildAuthToken(
+  path: string,
+  body: string,
+  queryString = '',
+): Promise<string> {
+  const accessKey = process.env.NWRA_ACCESS_KEY
+  const secretKey = process.env.NWRA_SECRET_KEY
+  if (!accessKey) throw new Error('NWRA_ACCESS_KEY is not set')
+  if (!secretKey) throw new Error('NWRA_SECRET_KEY is not set')
+
+  const content = createHash('sha256').update(queryString + body).digest('hex')
+  const key = new TextEncoder().encode(secretKey)
+
+  return new SignJWT({ path, content })
+    .setProtectedHeader({ alg: 'HS256', access_key: accessKey })
+    .sign(key)
 }
 
-// ── Public interface ──────────────────────────────────────────────────────────
+// ── Company creation ──────────────────────────────────────────────────────────
 
 export interface NwraSubmitResult {
   nwra_company_id: string
@@ -116,25 +105,46 @@ export interface NwraSubmitResult {
 /**
  * Submit a formation order to the Corporate Tools API.
  *
- * @param order - The confirmed order row from the database
- * @param owners - Owner rows with ssn_full populated (decrypted by caller)
- * @throws on any API error - caller must handle and write nwra_error status
+ * Step 1: POST /companies — creates the company record in NWRA's system.
+ * TODO: Confirm whether a separate order/filing call is needed after this
+ * (Shopping Cart, Order Items, or Filing Products endpoint).
+ *
+ * @param order  - The confirmed order row from the database
+ * @param owners - Owner rows with ssn_full populated (decrypted by caller, never logged)
  */
 export async function submitFormationOrder(
   order: Order,
   owners: (OrderOwner & { ssn_full?: string })[],
 ): Promise<NwraSubmitResult> {
-  const token = await buildAuthToken()
-  const payload = buildNwraPayload(order, owners)
+  void owners // owners used for future order-item / BOI steps; passed through now
 
-  // TODO: Replace '/companies' with the confirmed endpoint path.
-  const response = await fetch(`${NWRA_BASE_URL}/companies`, {
+  const entityType = ENTITY_TYPE_MAP[order.entity_type ?? ''] ?? order.entity_type ?? ''
+  const homeState  = STATE_NAME_MAP[order.formation_state ?? ''] ?? order.formation_state ?? ''
+
+  if (!entityType) throw new Error(`Unknown entity type: ${order.entity_type}`)
+  if (!homeState)  throw new Error(`Unknown formation state: ${order.formation_state}`)
+
+  const path = '/companies'
+  const requestBody = JSON.stringify({
+    companies: [
+      {
+        name:       order.business_name_choice_1,
+        entity_type: entityType,
+        home_state:  homeState,
+        duplicate_name_allowed: false,
+      },
+    ],
+  })
+
+  const token = await buildAuthToken(path, requestBody)
+
+  const response = await fetch(`${NWRA_BASE_URL}${path}`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${token}`,
+      Authorization:  `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(payload),
+    body: requestBody,
   })
 
   if (!response.ok) {
@@ -142,23 +152,26 @@ export async function submitFormationOrder(
     throw new Error(`NWRA API error ${response.status}: ${errorText}`)
   }
 
-  const data = await response.json() as Record<string, unknown>
+  const data = await response.json() as { result: Array<{ id: string }> }
+  const companyId = data.result?.[0]?.id ?? ''
 
-  // TODO: Map the actual response fields to these IDs once the API shape is known.
+  if (!companyId) {
+    throw new Error('NWRA API returned no company ID in result')
+  }
+
+  // TODO: Place the formation filing order (Order Items / Shopping Cart)
+  // and return the actual nwra_order_id once that endpoint is confirmed.
   return {
-    nwra_company_id: String(data.companyId ?? data.company_id ?? data.id ?? ''),
-    nwra_order_id:   String(data.orderId   ?? data.order_id   ?? data.id ?? ''),
+    nwra_company_id: companyId,
+    nwra_order_id:   companyId, // placeholder until filing order endpoint confirmed
   }
 }
 
 /**
  * Poll for the current status of an NWRA order.
- *
- * TODO: Implement once the status sync mechanism is confirmed (polling vs webhook).
- * If they push webhooks, create /api/webhooks/nwra instead of calling this.
+ * TODO: Implement once the status sync mechanism is confirmed (Callbacks webhook vs polling).
  */
 export async function getNwraOrderStatus(nwraOrderId: string): Promise<string> {
   void nwraOrderId
-  // TODO: implement
-  throw new Error('NWRA status polling not yet implemented - confirm mechanism with Corporate Tools')
+  throw new Error('NWRA status polling not yet implemented')
 }
