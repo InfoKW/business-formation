@@ -77,7 +77,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       error: 'Server error',
       debug_mock: process.env.MOCK_DB,
-      debug_detail: err instanceof Error ? err.message : JSON.stringify(err),
+      debug_detail: err instanceof Error
+        ? err.message
+        : JSON.stringify(err, Object.getOwnPropertyNames(err ?? {})),
     }, { status: 500 })
   }
 }
