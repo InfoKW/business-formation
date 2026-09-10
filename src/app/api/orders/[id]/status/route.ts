@@ -17,7 +17,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const insforge = createServiceClient()
     const { data, error } = await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .select('status, business_name_choice_1')
       .eq('id', id)
       .eq('status_token', token)

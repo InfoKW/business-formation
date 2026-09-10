@@ -65,7 +65,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const insforge = createServiceClient()
 
     const { data: existing, error: fetchError } = await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .select('id, status')
       .eq('id', id)
       .maybeSingle()
@@ -78,7 +78,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // Delete existing owners then re-insert (idempotent)
     const { error: deleteError } = await insforge.database
-      .from('formation.order_owners')
+      .from('order_owners')
       .delete()
       .eq('order_id', id)
     if (deleteError) throw deleteError
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     })
 
     const { error: insertError } = await insforge.database
-      .from('formation.order_owners')
+      .from('order_owners')
       .insert(ownerRows)
     if (insertError) throw insertError
 

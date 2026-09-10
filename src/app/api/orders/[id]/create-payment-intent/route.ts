@@ -39,7 +39,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const insforge = createServiceClient()
 
     const { data: order, error: fetchError } = await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .select('*')
       .eq('id', id)
       .maybeSingle()
@@ -75,7 +75,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         })
         clientSecret = pi.client_secret!
         await insforge.database
-          .from('formation.orders')
+          .from('orders')
           .update({ stripe_payment_intent_id: pi.id })
           .eq('id', id)
       }
@@ -89,7 +89,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       })
       clientSecret = pi.client_secret!
       await insforge.database
-        .from('formation.orders')
+        .from('orders')
         .update({
           stripe_payment_intent_id: pi.id,
           price_cents:              breakdown.total_cents,

@@ -13,7 +13,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const insforge = createServiceClient()
 
     const { data: order, error: fetchError } = await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .select('id, status')
       .eq('id', id)
       .maybeSingle()
@@ -30,11 +30,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     // Reset to payment_confirmed so the submission job can run again
     await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .update({ status: 'payment_confirmed', nwra_error_message: null })
       .eq('id', id)
 
-    await insforge.database.from('formation.order_events').insert({
+    await insforge.database.from('order_events').insert({
       order_id:   id,
       event_type: 'status_change',
       detail:     { from: 'nwra_error', to: 'payment_confirmed', triggered_by: 'admin_retry' },

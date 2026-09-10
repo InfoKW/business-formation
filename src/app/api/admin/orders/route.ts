@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     const insforge = createServiceClient()
 
     let query = insforge.database
-      .from('formation.orders')
+      .from('orders')
       .select('id, status, business_name_choice_1, entity_type, formation_state, contact_email, price_cents, created_at, updated_at, nwra_error_message')
       .order('updated_at', { ascending: false })
       .range(from, to)

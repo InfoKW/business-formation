@@ -41,7 +41,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const insforge = createServiceClient()
 
     const { data, error } = await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .select('*')
       .eq('id', id)
       .maybeSingle()
@@ -81,7 +81,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const insforge = createServiceClient()
 
     const { data: existing, error: fetchError } = await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .select('status, addons')
       .eq('id', id)
       .maybeSingle()
@@ -114,7 +114,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     if (Object.keys(updates).length > 0) {
       const { error: updateError } = await insforge.database
-        .from('formation.orders')
+        .from('orders')
         .update(updates)
         .eq('id', id)
       if (updateError) throw updateError

@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     const insforge = createServiceClient()
 
     const { data: order, error } = await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .insert({
         business_name_choice_1: d.business_name_choice_1,
         business_name_choice_2: d.business_name_choice_2 ?? null,
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
 
     if (error) throw error
 
-    await insforge.database.from('formation.order_events').insert({
+    await insforge.database.from('order_events').insert({
       order_id:   order.id,
       event_type: 'status_change',
       detail:     { from: null, to: 'draft' },

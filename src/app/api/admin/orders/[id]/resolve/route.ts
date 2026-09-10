@@ -16,7 +16,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const insforge = createServiceClient()
 
     const { data: order, error: fetchError } = await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .select('*')
       .eq('id', id)
       .maybeSingle()
@@ -32,11 +32,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     }
 
     await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .update({ status: 'filed_with_nwra', nwra_error_message: null })
       .eq('id', id)
 
-    await insforge.database.from('formation.order_events').insert({
+    await insforge.database.from('order_events').insert({
       order_id:   id,
       event_type: 'status_change',
       detail:     { from: 'nwra_error', to: 'filed_with_nwra', triggered_by: 'admin_manual_resolve' },

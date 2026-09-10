@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     const insforge = createServiceClient()
 
     const { data: order, error: fetchError } = await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .select('*')
       .eq('id', orderId)
       .maybeSingle()
@@ -73,11 +73,11 @@ export async function POST(req: NextRequest) {
 
     // Advance to payment_confirmed
     await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .update({ status: 'payment_confirmed', stripe_payment_status: paymentIntent.status })
       .eq('id', orderId)
 
-    await insforge.database.from('formation.order_events').insert([
+    await insforge.database.from('order_events').insert([
       {
         order_id:   orderId,
         event_type: 'stripe_webhook_received',
