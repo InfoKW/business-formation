@@ -21,7 +21,7 @@ export async function processNwraSubmission(orderId: string): Promise<void> {
 
   // 1. Load order
   const { data: order, error: orderError } = await insforge.database
-    .from('formation.orders')
+    .from('orders')
     .select('*')
     .eq('id', orderId)
     .maybeSingle()
@@ -43,7 +43,7 @@ export async function processNwraSubmission(orderId: string): Promise<void> {
 
   // 2. Load owners (including encrypted SSNs - backend only, never sent to client)
   const { data: ownersRaw } = await insforge.database
-    .from('formation.order_owners')
+    .from('order_owners')
     .select('*')
     .eq('order_id', orderId)
 
@@ -55,7 +55,7 @@ export async function processNwraSubmission(orderId: string): Promise<void> {
   }))
 
   // 4. Write audit event for the attempt
-  await insforge.database.from('formation.order_events').insert({
+  await insforge.database.from('order_events').insert({
     order_id:   orderId,
     event_type: 'nwra_call_attempted',
     detail:     { timestamp: new Date().toISOString() },
@@ -67,7 +67,7 @@ export async function processNwraSubmission(orderId: string): Promise<void> {
 
     // 6. Success: update order, clear encrypted SSNs
     await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .update({
         status:          'filed_with_nwra',
         nwra_company_id: result.nwra_company_id,
@@ -75,7 +75,7 @@ export async function processNwraSubmission(orderId: string): Promise<void> {
       })
       .eq('id', orderId)
 
-    await insforge.database.from('formation.order_events').insert({
+    await insforge.database.from('order_events').insert({
       order_id:   orderId,
       event_type: 'status_change',
       detail: {
@@ -88,7 +88,7 @@ export async function processNwraSubmission(orderId: string): Promise<void> {
 
     // Delete encrypted SSNs now that NWRA has them - no need to retain
     await insforge.database
-      .from('formation.order_owners')
+      .from('order_owners')
       .update({ ssn_encrypted: null })
       .eq('order_id', orderId)
 
@@ -106,11 +106,11 @@ export async function processNwraSubmission(orderId: string): Promise<void> {
 
     // 8. Failure: set nwra_error, write audit rows, fire alert
     await insforge.database
-      .from('formation.orders')
+      .from('orders')
       .update({ status: 'nwra_error', nwra_error_message: message })
       .eq('id', orderId)
 
-    await insforge.database.from('formation.order_events').insert([
+    await insforge.database.from('order_events').insert([
       {
         order_id:   orderId,
         event_type: 'nwra_call_failed',
