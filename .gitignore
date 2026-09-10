@@ -16,3 +16,6 @@ tsconfig.tsbuildinfo
 # misc
 .DS_Store
 *.pem
+
+# landing page (local only - not deployed)
+src/app/start/

@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 
-// Root → redirect to /start
+// Root → redirect to /apply
 export default function RootPage() {
-  redirect('/start')
+  redirect('/apply')
 }
