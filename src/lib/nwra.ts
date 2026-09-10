@@ -6,27 +6,21 @@
  *   Payload: { path: '/companies', content: sha256(queryString + requestBody) }
  *   Signed with: NWRA_SECRET_KEY
  *
- * Formation filing flow (3 steps):
- *   1. POST /companies           → create company record, get company_id
- *   2. POST /shopping-cart       → add formation filing product to cart
- *   3. POST /shopping-cart/checkout → place order (charges KelliWorks' NWRA account)
- *      Returns invoice_ids — actual confirmation via paid-invoice callback
+ * Formation filing flow:
+ *   1. POST /companies                    → create company, get company_id
+ *   2. GET  /filing-products/offerings    → look up product IDs for this company
+ *   3. POST /shopping-cart (per product)  → add formation + each enabled add-on
+ *   4. POST /shopping-cart/checkout       → place order against KelliWorks NWRA account
+ *      Returns invoice_ids (async — actual confirmation via paid-invoice callback)
  *
  * ── OPEN ITEMS ───────────────────────────────────────────────────────────────
- *  1. product_id — UUID for the formation filing product. Fetch from
- *     GET /filing-products filtered by entity_type + jurisdiction, OR use a
- *     fixed UUID per product type if NWRA assigns them as a wholesale partner.
- *     Set NWRA_FORMATION_PRODUCT_ID env var once confirmed.
- *  2. product_option_id — UUID for standard vs expedited filing method.
- *     Check GET /filing-methods. Set NWRA_STANDARD_OPTION_ID and
- *     NWRA_EXPEDITED_OPTION_ID env vars once confirmed.
- *  3. payment_token — KelliWorks' saved payment method UUID on NWRA's account.
- *     Check GET /payment-methods. Set NWRA_PAYMENT_TOKEN env var.
- *  4. form_data schema — check GET /filing-methods/schema for required fields
- *     per filing type (may need business address, owner info, etc.)
- *  5. paid-invoice callback — implement /api/webhooks/nwra to handle async
- *     order confirmation from NWRA (see Callbacks section in their docs).
- *  6. Test in NWRA sandbox before going live.
+ *  1. payment_token — KelliWorks' saved payment method UUID on NWRA's account.
+ *     Check GET /payment-methods and set NWRA_PAYMENT_TOKEN env var.
+ *  2. Expedited filing_method name — we match "Expedited" by name; confirm the
+ *     exact string returned by NWRA's API for expedited methods.
+ *  3. paid-invoice callback — implement /api/webhooks/nwra to handle async
+ *     order confirmation (see Callbacks section in NWRA docs).
+ *  4. Test in NWRA sandbox before going live.
  *
  * ── SSN handling ────────────────────────────────────────────────────────────
  *  Full SSNs are decrypted in nwra-submit.ts, passed here in memory, and are
@@ -42,16 +36,14 @@ const NWRA_BASE_URL = 'https://api.corporatetools.com'
 
 // ── Lookup tables ─────────────────────────────────────────────────────────────
 
-/** Map KelliWorks entity type codes → NWRA full entity type strings */
 const ENTITY_TYPE_MAP: Record<string, string> = {
   LLC:                  'Limited Liability Company',
   Corporation:          'Corporation',
-  'S-Corp':             'Corporation', // S-Corp election is a separate add-on
+  'S-Corp':             'Corporation',
   'Sole Proprietorship':'Sole Proprietorship',
   'Nonprofit':          'Nonprofit Corporation',
 }
 
-/** Map two-letter state abbreviations → full state names for NWRA */
 const STATE_NAME_MAP: Record<string, string> = {
   AL: 'Alabama',        AK: 'Alaska',          AZ: 'Arizona',
   AR: 'Arkansas',       CA: 'California',       CO: 'Colorado',
@@ -72,15 +64,34 @@ const STATE_NAME_MAP: Record<string, string> = {
   WI: 'Wisconsin',      WY: 'Wyoming',            DC: 'District of Columbia',
 }
 
+// ── NWRA product filing_name identifiers ─────────────────────────────────────
+// These match against the filing_name field returned by GET /filing-products/offerings.
+// If NWRA changes their names, update these constants.
+
+const FILING_NAME_FORMATION = 'form a company'
+const FILING_NAME_EIN       = 'tax id'
+const FILING_NAME_S_CORP    = 's corp'
+const FILING_NAME_BOI       = 'beneficial ownership information report'
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface NwraFilingMethod {
+  id:   string
+  name: string // e.g. "Standard", "Expedited"
+  type: string // e.g. "online", "mail", "fax"
+  cost: string
+}
+
+interface NwraFilingProduct {
+  id:             string
+  name:           string
+  filing_name:    string
+  price:          number
+  filing_methods: NwraFilingMethod[]
+}
+
 // ── JWT auth ─────────────────────────────────────────────────────────────────
 
-/**
- * Build a per-request JWT for the Corporate Tools API.
- *
- * Header:  { alg: 'HS256', access_key: <access key> }
- * Payload: { path: <endpoint path>, content: sha256(queryString + requestBody) }
- * Signed with secret_key (HS256).
- */
 async function buildAuthToken(
   path: string,
   body: string,
@@ -99,17 +110,19 @@ async function buildAuthToken(
     .sign(key)
 }
 
-/** Generic authenticated NWRA API call */
 async function nwraRequest<T>(
   method: 'GET' | 'POST' | 'DELETE',
   path: string,
-  body?: Record<string, unknown>,
-  queryString = '',
+  options: { body?: Record<string, unknown>; query?: Record<string, string> } = {},
 ): Promise<T> {
-  const bodyStr = body ? JSON.stringify(body) : ''
+  const queryString = options.query
+    ? new URLSearchParams(options.query).toString()
+    : ''
+  const bodyStr = options.body ? JSON.stringify(options.body) : ''
   const token = await buildAuthToken(path, bodyStr, queryString)
 
-  const res = await fetch(`${NWRA_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`, {
+  const url = `${NWRA_BASE_URL}${path}${queryString ? `?${queryString}` : ''}`
+  const res = await fetch(url, {
     method,
     headers: {
       Authorization:  `Bearer ${token}`,
@@ -139,14 +152,16 @@ async function createNwraCompany(order: Order): Promise<string> {
     'POST',
     '/companies',
     {
-      companies: [
-        {
-          name:        order.business_name_choice_1,
-          entity_type: entityType,
-          home_state:  homeState,
-          duplicate_name_allowed: false,
-        },
-      ],
+      body: {
+        companies: [
+          {
+            name:        order.business_name_choice_1,
+            entity_type: entityType,
+            home_state:  homeState,
+            duplicate_name_allowed: false,
+          },
+        ],
+      },
     },
   )
 
@@ -155,9 +170,44 @@ async function createNwraCompany(order: Order): Promise<string> {
   return companyId
 }
 
-// ── Step 2: Add to shopping cart ─────────────────────────────────────────────
+// ── Step 2: Look up filing products ──────────────────────────────────────────
 
-async function addToNwraCart(
+async function getFilingProducts(companyId: string): Promise<NwraFilingProduct[]> {
+  const data = await nwraRequest<{ result: NwraFilingProduct[] }>(
+    'GET',
+    '/filing-products/offerings',
+    { query: { company_id: companyId } },
+  )
+  return data.result ?? []
+}
+
+/**
+ * Find a filing product by its filing_name (case-insensitive partial match)
+ * and return the product_id + product_option_id for the requested speed.
+ */
+function resolveProduct(
+  products: NwraFilingProduct[],
+  filingName: string,
+  expedited: boolean,
+): { product_id: string; product_option_id: string } | null {
+  const product = products.find((p) =>
+    p.filing_name.toLowerCase().includes(filingName.toLowerCase()),
+  )
+  if (!product) return null
+
+  const methods = product.filing_methods ?? []
+  const method = expedited
+    ? (methods.find((m) => m.name.toLowerCase().includes('expedited')) ?? methods[0])
+    : (methods.find((m) => m.name.toLowerCase().includes('standard')) ?? methods[0])
+
+  if (!method) return null
+
+  return { product_id: product.id, product_option_id: method.id }
+}
+
+// ── Step 3: Add items to shopping cart ───────────────────────────────────────
+
+async function addToCart(
   companyId: string,
   productId: string,
   productOptionId: string,
@@ -166,17 +216,19 @@ async function addToNwraCart(
     'POST',
     '/shopping-cart',
     {
-      company_id:        companyId,
-      product_id:        productId,
-      product_option_id: productOptionId,
-      quantity:          1,
+      body: {
+        company_id:        companyId,
+        product_id:        productId,
+        product_option_id: productOptionId,
+        quantity:          1,
+      },
     },
   )
 }
 
-// ── Step 3: Checkout ──────────────────────────────────────────────────────────
+// ── Step 4: Checkout ──────────────────────────────────────────────────────────
 
-async function checkoutNwraCart(
+async function checkoutCart(
   companyId: string,
   productOptionId: string,
   paymentToken: string,
@@ -185,9 +237,11 @@ async function checkoutNwraCart(
     'POST',
     '/shopping-cart/checkout',
     {
-      payment_token:     paymentToken,
-      product_option_id: productOptionId,
-      company_ids:       [companyId],
+      body: {
+        payment_token:     paymentToken,
+        product_option_id: productOptionId,
+        company_ids:       [companyId],
+      },
     },
   )
   return data.invoice_ids ?? []
@@ -203,42 +257,55 @@ export interface NwraSubmitResult {
 /**
  * Submit a formation order to the Corporate Tools API.
  *
- * Requires the following env vars to be set:
- *   NWRA_ACCESS_KEY          — your Corporate Tools access key
- *   NWRA_SECRET_KEY          — your Corporate Tools secret key
- *   NWRA_FORMATION_PRODUCT_ID — UUID of the formation filing product (from GET /filing-products)
- *   NWRA_STANDARD_OPTION_ID   — UUID of the standard filing method (from GET /filing-methods)
- *   NWRA_EXPEDITED_OPTION_ID  — UUID of the expedited filing method (from GET /filing-methods)
- *   NWRA_PAYMENT_TOKEN        — UUID of KelliWorks' saved payment method (from GET /payment-methods)
+ * Required env vars:
+ *   NWRA_ACCESS_KEY    — Corporate Tools access key
+ *   NWRA_SECRET_KEY    — Corporate Tools secret key (signs JWTs)
+ *   NWRA_PAYMENT_TOKEN — KelliWorks' saved payment method UUID on NWRA's account
+ *                        (get from GET /payment-methods)
  */
 export async function submitFormationOrder(
   order: Order,
   owners: (OrderOwner & { ssn_full?: string })[],
 ): Promise<NwraSubmitResult> {
-  void owners // reserved for future form_data / BOI reporting steps
+  void owners // reserved for future form_data fields
 
-  const productId      = process.env.NWRA_FORMATION_PRODUCT_ID
-  const standardOption = process.env.NWRA_STANDARD_OPTION_ID
-  const expeditedOption= process.env.NWRA_EXPEDITED_OPTION_ID
-  const paymentToken   = process.env.NWRA_PAYMENT_TOKEN
-
-  if (!productId)       throw new Error('NWRA_FORMATION_PRODUCT_ID is not set')
-  if (!standardOption)  throw new Error('NWRA_STANDARD_OPTION_ID is not set')
-  if (!expeditedOption) throw new Error('NWRA_EXPEDITED_OPTION_ID is not set')
-  if (!paymentToken)    throw new Error('NWRA_PAYMENT_TOKEN is not set')
+  const paymentToken = process.env.NWRA_PAYMENT_TOKEN
+  if (!paymentToken) throw new Error('NWRA_PAYMENT_TOKEN is not set')
 
   const isExpedited = order.addons?.expedited === true
-  const productOptionId = isExpedited ? expeditedOption : standardOption
 
-  // Step 1: Create the company in NWRA
+  // 1. Create company
   const companyId = await createNwraCompany(order)
 
-  // Step 2: Add the formation filing product to the cart
-  await addToNwraCart(companyId, productId, productOptionId)
+  // 2. Fetch available filing products for this company
+  const products = await getFilingProducts(companyId)
 
-  // Step 3: Checkout — NWRA charges KelliWorks' account and queues the filing
-  // Returns invoice_ids immediately; actual confirmation arrives via paid-invoice callback
-  const invoiceIds = await checkoutNwraCart(companyId, productOptionId, paymentToken)
+  // 3. Add formation product to cart
+  const formation = resolveProduct(products, FILING_NAME_FORMATION, isExpedited)
+  if (!formation) throw new Error('NWRA: "Form a Company" filing product not found for this company')
+  await addToCart(companyId, formation.product_id, formation.product_option_id)
+
+  // 4. Add enabled add-ons to cart
+  if (order.addons?.ein) {
+    const ein = resolveProduct(products, FILING_NAME_EIN, false)
+    if (ein) await addToCart(companyId, ein.product_id, ein.product_option_id)
+    else console.warn('[nwra] EIN Tax ID product not found in offerings - skipping')
+  }
+
+  if (order.addons?.s_corp_election) {
+    const sCorp = resolveProduct(products, FILING_NAME_S_CORP, false)
+    if (sCorp) await addToCart(companyId, sCorp.product_id, sCorp.product_option_id)
+    else console.warn('[nwra] S Corp product not found in offerings - skipping')
+  }
+
+  if (order.addons?.boi_report) {
+    const boi = resolveProduct(products, FILING_NAME_BOI, false)
+    if (boi) await addToCart(companyId, boi.product_id, boi.product_option_id)
+    else console.warn('[nwra] BOI Report product not found in offerings - skipping')
+  }
+
+  // 5. Checkout — charges KelliWorks NWRA account, returns invoice IDs
+  const invoiceIds = await checkoutCart(companyId, formation.product_option_id, paymentToken)
 
   return {
     nwra_company_id: companyId,
@@ -246,10 +313,6 @@ export async function submitFormationOrder(
   }
 }
 
-/**
- * Poll for the current status of an NWRA order.
- * TODO: Implement once paid-invoice callback is set up (see Callbacks section in NWRA docs).
- */
 export async function getNwraOrderStatus(nwraOrderId: string): Promise<string> {
   void nwraOrderId
   throw new Error('NWRA status polling not yet implemented')
