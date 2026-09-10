@@ -2,51 +2,32 @@
 
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { loadStripe } from '@stripe/stripe-js'
 import KWHeader from '@/components/KWHeader'
 import Link from 'next/link'
 
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!)
-
-type PaymentState = 'loading' | 'succeeded' | 'processing' | 'failed'
+type PageState = 'loading' | 'success' | 'invalid'
 
 interface Props { orderId: string }
 
 export default function ConfirmationClient({ orderId }: Props) {
   const searchParams = useSearchParams()
-  const [paymentState, setPaymentState] = useState<PaymentState>('loading')
-  const [message, setMessage] = useState('')
+  const [pageState, setPageState] = useState<PageState>('loading')
 
   useEffect(() => {
-    const clientSecret = searchParams.get('payment_intent_client_secret')
-    if (!clientSecret) {
-      // Direct navigation without a payment - redirect to start
-      setPaymentState('failed')
-      setMessage('No payment information found. Please start a new order.')
-      return
-    }
+    const sessionId = searchParams.get('session_id')
+    const isMock    = searchParams.get('mock') === 'true'
 
-    stripePromise.then(async (stripe) => {
-      if (!stripe) return
-      const { paymentIntent } = await stripe.retrievePaymentIntent(clientSecret)
-      switch (paymentIntent?.status) {
-        case 'succeeded':
-          setPaymentState('succeeded')
-          // Clear session storage on success so they can't re-submit
-          try { sessionStorage.removeItem('kw_formation_state') } catch {}
-          break
-        case 'processing':
-          setPaymentState('processing')
-          setMessage('Your payment is processing. You\'ll receive a confirmation email shortly.')
-          break
-        default:
-          setPaymentState('failed')
-          setMessage(paymentIntent?.last_payment_error?.message ?? 'Payment was not completed.')
-      }
-    })
+    if (sessionId || isMock) {
+      // Stripe redirected here after successful Checkout — payment is confirmed
+      setPageState('success')
+      try { sessionStorage.removeItem('kw_formation_state') } catch {}
+    } else {
+      // Direct navigation without a valid Stripe redirect
+      setPageState('invalid')
+    }
   }, [searchParams])
 
-  if (paymentState === 'loading') {
+  if (pageState === 'loading') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-kw-cream text-kw-text-muted text-sm">
         Confirming your payment...
@@ -54,16 +35,19 @@ export default function ConfirmationClient({ orderId }: Props) {
     )
   }
 
-  if (paymentState === 'failed') {
+  if (pageState === 'invalid') {
     return (
       <div className="min-h-screen flex flex-col bg-kw-cream">
         <KWHeader />
         <main className="flex-1 flex items-start justify-center px-4 py-16">
           <div className="max-w-lg w-full bg-white border border-red-200 rounded-card p-8 text-center">
             <div className="text-4xl mb-4">&#10060;</div>
-            <h1 className="font-display text-2xl text-kw-forest mb-3">Payment Not Completed</h1>
-            <p className="text-kw-text-secondary text-sm mb-6">{message}</p>
-            <Link href="/apply" className="btn-gold">Try Again</Link>
+            <h1 className="font-display text-2xl text-kw-forest mb-3">No payment found</h1>
+            <p className="text-kw-text-secondary text-sm mb-6">
+              We could not find a completed payment for this order. If you just paid, please wait a
+              moment and refresh — or contact us if the issue persists.
+            </p>
+            <Link href="/apply" className="btn-gold">Start a New Order</Link>
           </div>
         </main>
       </div>
@@ -88,14 +72,10 @@ export default function ConfirmationClient({ orderId }: Props) {
               Order Confirmed
             </p>
             <h1 className="font-display text-3xl font-normal text-white mb-4">
-              {paymentState === 'processing'
-                ? 'Payment Processing'
-                : 'Payment Received'}
+              Payment Received
             </h1>
             <p className="text-white/75 text-[15px] leading-relaxed">
-              {paymentState === 'processing'
-                ? message
-                : 'Thank you - your payment has been received and your formation order has been submitted for processing.'}
+              Thank you — your payment has been received and your formation order has been submitted for processing.
             </p>
           </div>
 
@@ -105,8 +85,8 @@ export default function ConfirmationClient({ orderId }: Props) {
             <div className="space-y-3 text-sm text-kw-text-secondary">
               {[
                 'KelliWorks submits your formation order to our filing partner (Northwest Registered Agent).',
-                'Our filing partner places your order in queue for the relevant state - standard timelines vary by state; select expedited filing for faster processing.',
-                'You\'ll receive an email confirmation at each stage. Once your entity is officially formed, we\'ll notify you with next steps.',
+                'Our filing partner places your order in queue for the relevant state — standard timelines vary by state; select expedited filing for faster processing.',
+                "You'll receive an email confirmation at each stage. Once your entity is officially formed, we'll notify you with next steps.",
               ].map((s, i) => (
                 <div key={i} className="flex gap-3">
                   <span className="w-5 h-5 rounded-full bg-kw-gold/20 text-kw-gold-dark text-[11px] font-bold flex-shrink-0 flex items-center justify-center mt-0.5">
@@ -121,7 +101,7 @@ export default function ConfirmationClient({ orderId }: Props) {
           {/* Important note */}
           <div className="border-l-4 border-kw-gold bg-kw-gold/5 px-5 py-4 rounded-r-card text-sm text-kw-text-secondary mb-6">
             <strong className="text-kw-forest">Please note:</strong> Submitting your order and payment today starts
-            the process - it does not mean your business entity exists yet. Formation timelines depend on your state.
+            the process — it does not mean your business entity exists yet. Formation timelines depend on your state.
           </div>
 
           <div className="text-center">

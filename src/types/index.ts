@@ -53,6 +53,7 @@ export interface Order {
   contact_email: string
   contact_phone: string | null
   stripe_payment_intent_id: string | null
+  stripe_checkout_session_id: string | null
   stripe_payment_status: string | null
   nwra_company_id: string | null
   nwra_order_id: string | null

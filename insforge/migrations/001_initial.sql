@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS formation.orders (
 
   -- Stripe
   stripe_payment_intent_id        text,
+  stripe_checkout_session_id      text,
   stripe_payment_status           text,
 
   -- NWRA / Corporate Tools
