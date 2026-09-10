@@ -14,9 +14,7 @@
  *      Returns invoice_ids (async — actual confirmation via paid-invoice callback)
  *
  * ── OPEN ITEMS ───────────────────────────────────────────────────────────────
- *  1. payment_token — KelliWorks' saved payment method UUID on NWRA's account.
- *     Check GET /payment-methods and set NWRA_PAYMENT_TOKEN env var.
- *  2. Expedited filing_method name — we match "Expedited" by name; confirm the
+ *  1. Expedited filing_method name — we match "Expedited" by name; confirm the
  *     exact string returned by NWRA's API for expedited methods.
  *  3. paid-invoice callback — implement /api/webhooks/nwra to handle async
  *     order confirmation (see Callbacks section in NWRA docs).
@@ -226,6 +224,33 @@ async function addToCart(
   )
 }
 
+// ── Payment method lookup ─────────────────────────────────────────────────────
+
+/**
+ * Get the payment token to use for NWRA checkout.
+ * Uses NWRA_PAYMENT_TOKEN env var if set, otherwise fetches the first saved
+ * card from GET /payment-methods on KelliWorks' NWRA account.
+ * Note: NWRA requires a real saved card — test cards are not supported.
+ */
+async function getPaymentToken(): Promise<string> {
+  // Env var override — useful if account has multiple cards
+  if (process.env.NWRA_PAYMENT_TOKEN) return process.env.NWRA_PAYMENT_TOKEN
+
+  const data = await nwraRequest<{ result: Array<{ id: string }> }>(
+    'GET',
+    '/payment-methods',
+  )
+
+  const token = data.result?.[0]?.id
+  if (!token) {
+    throw new Error(
+      'No saved payment method found on NWRA account. ' +
+      'Add a card at accounts.northwestregisteredagent.com or set NWRA_PAYMENT_TOKEN.',
+    )
+  }
+  return token
+}
+
 // ── Step 4: Checkout ──────────────────────────────────────────────────────────
 
 async function checkoutCart(
@@ -260,8 +285,8 @@ export interface NwraSubmitResult {
  * Required env vars:
  *   NWRA_ACCESS_KEY    — Corporate Tools access key
  *   NWRA_SECRET_KEY    — Corporate Tools secret key (signs JWTs)
- *   NWRA_PAYMENT_TOKEN — KelliWorks' saved payment method UUID on NWRA's account
- *                        (get from GET /payment-methods)
+ *   NWRA_PAYMENT_TOKEN — (optional) KelliWorks' saved payment method UUID.
+ *                        If not set, the first card from GET /payment-methods is used.
  */
 export async function submitFormationOrder(
   order: Order,
@@ -269,8 +294,7 @@ export async function submitFormationOrder(
 ): Promise<NwraSubmitResult> {
   void owners // reserved for future form_data fields
 
-  const paymentToken = process.env.NWRA_PAYMENT_TOKEN
-  if (!paymentToken) throw new Error('NWRA_PAYMENT_TOKEN is not set')
+  const paymentToken = await getPaymentToken()
 
   const isExpedited = order.addons?.expedited === true
 
